@@ -5,7 +5,8 @@ use alloy::{
 use axum::{Json, Router, extract::State, routing::get};
 use clap::Parser;
 use discv5::{ConfigBuilder, Enr, enr::CombinedKey};
-use kona_p2p::{LocalNode, Network};
+use kona_disc::LocalNode;
+use kona_node_service::{NetworkBuilder};
 use kona_registry::ROLLUP_CONFIGS;
 use libp2p::{Multiaddr, identity::Keypair};
 use op_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope};
@@ -67,15 +68,17 @@ async fn start(network: &str, disc_port: u16, gossip_port: u16, server_port: u16
         .expect("rollup config not found")
         .clone();
 
-    let mut network = Network::builder()
-        .with_rollup_config(cfg)
-        .with_unsafe_block_signer(chain_config.unsafe_signer)
-        .with_discovery_address(disc)
-        .with_gossip_address(gossip_addr)
-        .with_keypair(gossip_key)
-        .with_discovery_config(ConfigBuilder::new(disc_listen.into()).build())
-        .build()
-        .expect("Failed to builder network driver");
+    let mut network = NetworkBuilder::new(
+        cfg,
+        chain_config.unsafe_signer,
+        gossip_addr,
+        gossip_key,
+        disc,
+        ConfigBuilder::new(disc_listen.into()).build(),
+        None,
+    )
+    .build()
+    .expect("Failed to builder network driver");
 
     for bootnode in chain_config.bootnodes {
         network
@@ -87,8 +90,8 @@ async fn start(network: &str, disc_port: u16, gossip_port: u16, server_port: u16
             .unwrap();
     }
 
-    let mut payload_recv = network.unsafe_block_recv();
-    network
+    // Start the network and get the handler
+    let mut handler = network
         .start()
         .await
         .expect("Failed to start network driver");
@@ -100,23 +103,34 @@ async fn start(network: &str, disc_port: u16, gossip_port: u16, server_port: u16
 
     let state_copy = state.clone();
 
+    // Process network events and extract block payloads
     tokio::spawn(async move {
-        while let Ok(payload_envelope) = payload_recv.recv().await {
-            let hash = payload_envelope.payload.block_hash();
-            let number = payload_envelope.payload.block_number();
-            info!("block received: {}", hash);
+        loop {
+            // Also handle ENR discovery events
+            tokio::select! {
+                Some(enr) = handler.enr_receiver.recv() => {
+                    handler.gossip.dial(enr);
+                }
+                Some(event) = handler.gossip.next() => {
+                    if let Some(payload_envelope) = handler.gossip.handle_event(event) {
+                        let hash = payload_envelope.payload.block_hash();
+                        let number = payload_envelope.payload.block_number();
+                        info!("block received: {}", hash);
 
-            let latest = state_copy
-                .read()
-                .await
-                .latest_commitment
-                .as_ref()
-                .map(|value| value.1)
-                .unwrap_or_default();
+                        let latest = state_copy
+                            .read()
+                            .await
+                            .latest_commitment
+                            .as_ref()
+                            .map(|value| value.1)
+                            .unwrap_or_default();
 
-            if number > latest {
-                let commitment = SequencerCommitment::from(payload_envelope);
-                state_copy.write().await.latest_commitment = Some((commitment, number));
+                        if number > latest {
+                            let commitment = SequencerCommitment::from(payload_envelope);
+                            state_copy.write().await.latest_commitment = Some((commitment, number));
+                        }
+                    }
+                }
             }
         }
     });
@@ -207,7 +221,17 @@ impl From<&str> for ChainConfig {
             "base" => ChainConfig {
                 unsafe_signer: address!("Af6E19BE0F9cE7f8afd49a1824851023A8249e8a"),
                 chain_id: 8453,
-                bootnodes: Vec::new(),
+                // retrieved from: https://github.com/base/node/blob/18a9591d2b06ae90885d450e824c75ccd6d8582c/.env.mainnet#L26
+                bootnodes: vec![
+                    "enr:-J24QNz9lbrKbN4iSmmjtnr7SjUMk4zB7f1krHZcTZx-JRKZd0kA2gjufUROD6T3sOWDVDnFJRvqBBo62zuF-hYCohOGAYiOoEyEgmlkgnY0gmlwhAPniryHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQKNVFlCxh_B-716tTs-h1vMzZkSs1FTu_OYTNjgufplG4N0Y3CCJAaDdWRwgiQG",
+                    "enr:-J24QH-f1wt99sfpHy4c0QJM-NfmsIfmlLAMMcgZCUEgKG_BBYFc6FwYgaMJMQN5dsRBJApIok0jFn-9CS842lGpLmqGAYiOoDRAgmlkgnY0gmlwhLhIgb2Hb3BzdGFja4OFQgCJc2VjcDI1NmsxoQJ9FTIv8B9myn1MWaC_2lJ-sMoeCDkusCsk4BYHjjCq04N0Y3CCJAaDdWRwgiQG",
+                    "enr:-J24QDXyyxvQYsd0yfsN0cRr1lZ1N11zGTplMNlW4xNEc7LkPXh0NAJ9iSOVdRO95GPYAIc6xmyoCCG6_0JxdL3a0zaGAYiOoAjFgmlkgnY0gmlwhAPckbGHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQJwoS7tzwxqXSyFL7g0JM-KWVbgvjfB8JA__T7yY_cYboN0Y3CCJAaDdWRwgiQG",
+                    "enr:-J24QHmGyBwUZXIcsGYMaUqGGSl4CFdx9Tozu-vQCn5bHIQbR7On7dZbU61vYvfrJr30t0iahSqhc64J46MnUO2JvQaGAYiOoCKKgmlkgnY0gmlwhAPnCzSHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQINc4fSijfbNIiGhcgvwjsjxVFJHUstK9L1T8OTKUjgloN0Y3CCJAaDdWRwgiQG",
+                    "enr:-J24QG3ypT4xSu0gjb5PABCmVxZqBjVw9ca7pvsI8jl4KATYAnxBmfkaIuEqy9sKvDHKuNCsy57WwK9wTt2aQgcaDDyGAYiOoGAXgmlkgnY0gmlwhDbGmZaHb3BzdGFja4OFQgCJc2VjcDI1NmsxoQIeAK_--tcLEiu7HvoUlbV52MspE0uCocsx1f_rYvRenIN0Y3CCJAaDdWRwgiQG",
+                ]
+                .iter()
+                .map(|v| v.parse().unwrap())
+                .collect::<_>(),
             },
             "unichain" => ChainConfig {
                 unsafe_signer: address!("0x833C6f278474A78658af91aE8edC926FE33a230e"),

@@ -2,15 +2,17 @@
 name = "helios-opstack-server"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 
 [dependencies]
-alloy = { version = "0.15.10" }
-kona-p2p = { git = "https://github.com/op-rs/kona", rev = "b079a57fcfbb444d051e859f1e80f445daf5a2c7" }
-kona-registry = { git = "https://github.com/op-rs/kona", rev = "b079a57fcfbb444d051e859f1e80f445daf5a2c7" }
-op-alloy-rpc-types-engine = "0.15.2"
+alloy = "1.1.2"
+kona-disc = { git = "https://github.com/op-rs/kona", rev = "d7d4b5da8022f4b7a060d4ef6723b5b236ff7f2e" }
+kona-node-service = { git = "https://github.com/op-rs/kona", rev = "d7d4b5da8022f4b7a060d4ef6723b5b236ff7f2e" }
+kona-registry = { git = "https://github.com/op-rs/kona", rev = "d7d4b5da8022f4b7a060d4ef6723b5b236ff7f2e" }
+op-alloy-rpc-types-engine = "0.22.4"
 ethereum_ssz = "0.9"
 
-libp2p = { version = "0.55.0", features = ["macros", "tokio", "tcp", "noise", "gossipsub", "ping"] }
+libp2p = { version = "0.56.0", features = ["macros", "tokio", "tcp", "noise", "gossipsub", "ping"] }
 discv5 = "0.9.1"
 tokio = { version = "1.44.2", features = ["full"] }
 axum = "0.8.3"
