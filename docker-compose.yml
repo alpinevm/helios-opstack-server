@@ -43,6 +43,6 @@ services:
       options:
         awslogs-region: ${AWSLOGS_REGION:-us-west-1}
         awslogs-group: ${AWSLOGS_GROUP:-/rift/prod/base-helios-server}
-        awslogs-stream-prefix: ${AWSLOGS_STREAM_PREFIX:-base-helios-server}
+        awslogs-stream: ${AWSLOGS_STREAM:-base-helios-server}
         awslogs-create-group: "true"
     restart: unless-stopped
