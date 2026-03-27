@@ -151,6 +151,7 @@ fn enable_tracing() {
 
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(env_filter)
+        .with_ansi(false)
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("subscriber set failed");
