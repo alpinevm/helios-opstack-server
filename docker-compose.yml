@@ -1,0 +1,48 @@
+services:
+  base-helios-server:
+    container_name: base-helios-server
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM rust:1.88-bookworm AS builder
+        WORKDIR /app
+
+        RUN apt-get update \
+          && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \
+          && rm -rf /var/lib/apt/lists/*
+
+        COPY Cargo.toml Cargo.lock ./
+        COPY src ./src
+
+        RUN cargo build --release
+
+        FROM debian:bookworm-slim
+        RUN apt-get update \
+          && apt-get install -y --no-install-recommends ca-certificates \
+          && rm -rf /var/lib/apt/lists/*
+
+        WORKDIR /app
+        COPY --from=builder /app/target/release/helios-opstack-server /app/helios-opstack-server
+
+        ENTRYPOINT ["/app/helios-opstack-server"]
+    command:
+      - "--network"
+      - "base"
+      - "--disc-port"
+      - "9000"
+      - "--gossip-port"
+      - "9001"
+      - "--server-port"
+      - "8080"
+    ports:
+      - "8080:8080"
+      - "9000:9000/udp"
+      - "9001:9001"
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWSLOGS_REGION:-us-west-1}
+        awslogs-group: ${AWSLOGS_GROUP:-/rift/prod/base-helios-server}
+        awslogs-stream-prefix: ${AWSLOGS_STREAM_PREFIX:-base-helios-server}
+        awslogs-create-group: "true"
+    restart: unless-stopped
